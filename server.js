@@ -75,7 +75,26 @@ function resolveBin(cmd, filename) {
 const FFMPEG = resolveBin("ffmpeg", "ffmpeg.exe") || "ffmpeg";
 const FFPROBE = resolveBin("ffprobe", "ffprobe.exe") || "ffprobe";
 const YTDLP = resolveBin("yt-dlp", "yt-dlp.exe") || "yt-dlp";
+const DENO = resolveBin("deno", "deno.exe"); // JS runtime YouTube now needs
 const FFMPEG_DIR = path.dirname(FFMPEG);
+
+// Cookies let yt-dlp pass YouTube's "confirm you're not a bot" check.
+// Priority: explicit env file > cookies.txt beside this app > a browser name.
+const COOKIES_FILE =
+  process.env.YT_COOKIES_FILE ||
+  (fs.existsSync(path.join(__dirname, "cookies.txt"))
+    ? path.join(__dirname, "cookies.txt")
+    : null);
+const COOKIES_BROWSER = process.env.YT_COOKIES_BROWSER || null; // e.g. "firefox"
+
+// Shared yt-dlp args for every call (JS runtime + auth cookies).
+function ytCommonArgs() {
+  const a = [];
+  if (DENO) a.push("--js-runtimes", `deno:${DENO}`);
+  if (COOKIES_FILE) a.push("--cookies", COOKIES_FILE);
+  else if (COOKIES_BROWSER) a.push("--cookies-from-browser", COOKIES_BROWSER);
+  return a;
+}
 
 // LibreOffice (optional) for document conversion.
 function resolveSoffice() {
@@ -94,6 +113,15 @@ console.log("Binaries:");
 console.log("  ffmpeg :", FFMPEG);
 console.log("  ffprobe:", FFPROBE);
 console.log("  yt-dlp :", YTDLP);
+console.log("  deno   :", DENO || "(not found — YouTube may be degraded)");
+console.log(
+  "  cookies:",
+  COOKIES_FILE
+    ? `file: ${COOKIES_FILE}`
+    : COOKIES_BROWSER
+    ? `browser: ${COOKIES_BROWSER}`
+    : "(none — some YouTube videos will hit the bot check)"
+);
 console.log("  soffice:", SOFFICE || "(not found — document conversion disabled)");
 
 // ---------------------------------------------------------------------------
@@ -287,6 +315,7 @@ app.post("/api/download", (req, res) => {
   const outTemplate = path.join(WORK, `dl-${id}.%(ext)s`);
 
   let args = [
+    ...ytCommonArgs(),
     "--no-playlist",
     "--ffmpeg-location", FFMPEG_DIR,
     "-o", outTemplate,
@@ -338,7 +367,7 @@ app.post("/api/download", (req, res) => {
 app.post("/api/info", (req, res) => {
   const url = (req.body.url || "").trim();
   if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: "Invalid URL" });
-  const p = spawn(YTDLP, ["--no-playlist", "-J", url]);
+  const p = spawn(YTDLP, [...ytCommonArgs(), "--no-playlist", "-J", url]);
   let out = "";
   let err = "";
   p.stdout.on("data", (d) => (out += d.toString()));
