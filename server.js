@@ -87,10 +87,18 @@ const COOKIES_FILE =
     : null);
 const COOKIES_BROWSER = process.env.YT_COOKIES_BROWSER || null; // e.g. "firefox"
 
-// Shared yt-dlp args for every call (JS runtime + auth cookies).
+// YouTube "player clients" to try. Handing yt-dlp several at once lets it fall
+// back automatically when one hits YouTube's bot check — the trick that makes
+// online converters "just work" without cookies. Override via env if needed.
+const YT_CLIENTS =
+  process.env.YT_CLIENTS || "default,android,web_embedded,mweb,ios,tv";
+
+// Shared yt-dlp args for every call (JS runtime + client fallbacks + auth).
 function ytCommonArgs() {
   const a = [];
   if (DENO) a.push("--js-runtimes", `deno:${DENO}`);
+  a.push("--extractor-args", `youtube:player_client=${YT_CLIENTS}`);
+  a.push("--retries", "5", "--extractor-retries", "5", "--fragment-retries", "10");
   if (COOKIES_FILE) a.push("--cookies", COOKIES_FILE);
   else if (COOKIES_BROWSER) a.push("--cookies-from-browser", COOKIES_BROWSER);
   return a;
