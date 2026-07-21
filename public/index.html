@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Free Converter</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #131a26;
+    --panel-2: #1b2536;
+    --border: #263349;
+    --text: #e7edf5;
+    --muted: #8ea0b8;
+    --accent: #4f8cff;
+    --accent-2: #35d0a5;
+    --danger: #ff6b6b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #16233b 0%, var(--bg) 60%);
+    color: var(--text); min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+  header { text-align: center; margin-bottom: 28px; }
+  header h1 { margin: 0; font-size: 30px; letter-spacing: -0.5px; }
+  header h1 span { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--muted); margin: 8px 0 0; font-size: 14px; }
+  .tabs { display: flex; gap: 8px; background: var(--panel); padding: 6px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 22px; }
+  .tab { flex: 1; text-align: center; padding: 11px; border-radius: 8px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 14px; user-select: none; transition: .15s; }
+  .tab.active { background: var(--panel-2); color: var(--text); box-shadow: 0 0 0 1px var(--border) inset; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+  .hidden { display: none; }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 38px 20px; text-align: center;
+    cursor: pointer; transition: .15s; color: var(--muted);
+  }
+  .drop.drag { border-color: var(--accent); background: rgba(79,140,255,.06); color: var(--text); }
+  .drop strong { color: var(--text); }
+  .filechip { display: flex; align-items: center; gap: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 14px; }
+  .filechip .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .filechip .x { cursor: pointer; color: var(--muted); font-size: 18px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 18px 0 7px; font-weight: 600; }
+  select, input[type=text] {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 12px 14px; border-radius: 10px; font-size: 15px; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button.go {
+    width: 100%; margin-top: 22px; padding: 14px; border: none; border-radius: 11px; cursor: pointer;
+    font-size: 15px; font-weight: 700; color: #fff;
+    background: linear-gradient(90deg, var(--accent), #6aa0ff);
+  }
+  button.go:disabled { opacity: .5; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 14px; min-height: 20px; }
+  .status.err { color: var(--danger); white-space: pre-wrap; }
+  .status.ok { color: var(--accent-2); }
+  .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .seg { display: flex; gap: 8px; }
+  .seg .opt { flex: 1; text-align: center; padding: 11px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; color: var(--muted); font-weight: 600; }
+  .seg .opt.active { border-color: var(--accent); color: var(--text); background: rgba(79,140,255,.08); }
+  .preview { display: flex; gap: 14px; margin-top: 16px; align-items: center; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .preview img { width: 120px; height: 68px; object-fit: cover; border-radius: 6px; }
+  .preview .t { font-size: 14px; font-weight: 600; }
+  .preview .m { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 18px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Free <span>Converter</span></h1>
+    <p>Convert any file to the formats you need — plus YouTube &amp; SoundCloud to MP3/MP4.</p>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="file">Convert a File</div>
+    <div class="tab" data-tab="media">YouTube / SoundCloud</div>
+  </div>
+
+  <!-- FILE CONVERTER -->
+  <div class="card" id="tab-file">
+    <div class="drop" id="drop">
+      <div>⬆️ <strong>Drop a file here</strong> or click to browse</div>
+      <div style="font-size:12px;margin-top:6px">Images · Audio · Video · Documents</div>
+    </div>
+    <input type="file" id="fileInput" class="hidden" />
+    <div id="fileChip"></div>
+
+    <div id="convertOpts" class="hidden">
+      <label>Convert to</label>
+      <select id="targetFormat"></select>
+
+      <div class="row" id="qualityRow" style="display:none">
+        <div id="audioQWrap" style="display:none">
+          <label>Audio bitrate</label>
+          <select id="audioBitrate">
+            <option value="">Auto (best)</option>
+            <option value="320k">320 kbps</option>
+            <option value="256k">256 kbps</option>
+            <option value="192k">192 kbps</option>
+            <option value="128k">128 kbps</option>
+          </select>
+        </div>
+        <div id="videoQWrap" style="display:none">
+          <label>Video bitrate</label>
+          <select id="videoBitrate">
+            <option value="">Auto</option>
+            <option value="8M">High (8M)</option>
+            <option value="4M">Medium (4M)</option>
+            <option value="2M">Low (2M)</option>
+          </select>
+        </div>
+      </div>
+
+      <button class="go" id="convertBtn">Convert &amp; Download</button>
+      <div class="status" id="fileStatus"></div>
+    </div>
+
+    <div class="note" id="docNote"></div>
+  </div>
+
+  <!-- MEDIA DOWNLOADER -->
+  <div class="card hidden" id="tab-media">
+    <label>Video / track URL</label>
+    <input type="text" id="url" placeholder="https://youtube.com/watch?v=…  or  https://soundcloud.com/…" />
+    <div class="preview hidden" id="preview"></div>
+
+    <label>Format</label>
+    <div class="seg" id="fmtSeg">
+      <div class="opt active" data-fmt="mp3">🎵 MP3 (audio)</div>
+      <div class="opt" data-fmt="mp4">🎬 MP4 (video)</div>
+    </div>
+
+    <div id="mp4Q">
+      <label>Max quality</label>
+      <select id="videoQuality">
+        <option value="2160">4K (2160p)</option>
+        <option value="1080" selected>1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+      </select>
+    </div>
+
+    <button class="go" id="dlBtn">Download</button>
+    <div class="status" id="mediaStatus"></div>
+
+    <div class="note">
+      Only download content you own or have the right to use. Respect each platform's Terms of Service and copyright law.
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach((t) => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    $("#tab-file").classList.toggle("hidden", t.dataset.tab !== "file");
+    $("#tab-media").classList.toggle("hidden", t.dataset.tab !== "media");
+  };
+});
+
+// ---------- File conversion ----------
+let currentFile = null;
+let formatsMeta = null;
+fetch("/api/formats").then((r) => r.json()).then((d) => {
+  formatsMeta = d;
+  if (!d.documentsEnabled) {
+    $("#docNote").innerHTML = "📄 Document conversion (PDF, DOCX, etc.) needs LibreOffice installed. Image, audio &amp; video conversion work out of the box.";
+  }
+});
+
+const drop = $("#drop");
+const fileInput = $("#fileInput");
+drop.onclick = () => fileInput.click();
+["dragover"].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("drag"); }));
+["dragleave","drop"].forEach((e) => drop.addEventListener(e, () => drop.classList.remove("drag")));
+drop.addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  if (ev.dataTransfer.files[0]) setFile(ev.dataTransfer.files[0]);
+});
+fileInput.onchange = () => { if (fileInput.files[0]) setFile(fileInput.files[0]); };
+
+function setFile(f) {
+  currentFile = f;
+  $("#fileChip").innerHTML = `<div class="filechip"><span>📎</span><span class="name">${f.name}</span><span style="color:var(--muted);font-size:12px">${(f.size/1048576).toFixed(1)} MB</span><span class="x" onclick="clearFile()">✕</span></div>`;
+  const ext = f.name.split(".").pop().toLowerCase();
+  fetch("/api/targets?ext=" + encodeURIComponent(ext)).then((r) => r.json()).then((d) => {
+    const sel = $("#targetFormat");
+    if (!d.targets.length) {
+      sel.innerHTML = "<option>Unsupported file type</option>";
+      $("#convertBtn").disabled = true;
+      $("#qualityRow").style.display = "none";
+    } else {
+      sel.innerHTML = d.targets.filter((t) => t !== ext).map((t) => `<option value="${t}">${t.toUpperCase()}</option>`).join("");
+      $("#convertBtn").disabled = false;
+      updateQualityUI();
+    }
+    $("#convertOpts").classList.remove("hidden");
+  });
+}
+function clearFile() {
+  currentFile = null; fileInput.value = "";
+  $("#fileChip").innerHTML = ""; $("#convertOpts").classList.add("hidden"); $("#fileStatus").textContent = "";
+}
+$("#targetFormat").addEventListener("change", updateQualityUI);
+function updateQualityUI() {
+  const t = $("#targetFormat").value;
+  const isAudio = formatsMeta && formatsMeta.audio.includes(t);
+  const isVideo = formatsMeta && formatsMeta.video.includes(t) && t !== "gif";
+  $("#audioQWrap").style.display = isAudio ? "block" : "none";
+  $("#videoQWrap").style.display = isVideo ? "block" : "none";
+  $("#qualityRow").style.display = (isAudio || isVideo) ? "flex" : "none";
+}
+
+$("#convertBtn").onclick = async () => {
+  if (!currentFile) return;
+  const target = $("#targetFormat").value;
+  const status = $("#fileStatus");
+  status.className = "status"; status.innerHTML = `<span class="spinner"></span>Converting… (large files take a while)`;
+  $("#convertBtn").disabled = true;
+
+  const fd = new FormData();
+  fd.append("file", currentFile);
+  fd.append("target", target);
+  fd.append("audioBitrate", $("#audioBitrate").value);
+  fd.append("videoBitrate", $("#videoBitrate").value);
+
+  try {
+    const res = await fetch("/api/convert", { method: "POST", body: fd });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({ error: "Conversion failed" }));
+      throw new Error(j.error || "Conversion failed");
+    }
+    const blob = await res.blob();
+    downloadBlob(blob, currentFile.name.replace(/\.[^.]+$/, "") + "." + target);
+    status.className = "status ok"; status.textContent = "✓ Done — file downloaded.";
+  } catch (e) {
+    status.className = "status err"; status.textContent = "✕ " + e.message;
+  }
+  $("#convertBtn").disabled = false;
+};
+
+// ---------- Media downloader ----------
+let fmt = "mp3";
+document.querySelectorAll("#fmtSeg .opt").forEach((o) => {
+  o.onclick = () => {
+    document.querySelectorAll("#fmtSeg .opt").forEach((x) => x.classList.remove("active"));
+    o.classList.add("active"); fmt = o.dataset.fmt;
+    $("#mp4Q").style.display = fmt === "mp4" ? "block" : "none";
+  };
+});
+$("#mp4Q").style.display = "none";
+
+let infoTimer = null;
+$("#url").addEventListener("input", () => {
+  clearTimeout(infoTimer);
+  const url = $("#url").value.trim();
+  $("#preview").classList.add("hidden");
+  if (!/^https?:\/\//.test(url)) return;
+  infoTimer = setTimeout(() => {
+    fetch("/api/info", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })
+      .then((r) => r.json()).then((d) => {
+        if (d.error) return;
+        const dur = d.duration ? new Date(d.duration * 1000).toISOString().substr(11, 8).replace(/^00:/, "") : "";
+        $("#preview").innerHTML = `${d.thumbnail ? `<img src="${d.thumbnail}">` : ""}<div><div class="t">${d.title || ""}</div><div class="m">${d.uploader || ""} ${dur ? "· " + dur : ""}</div></div>`;
+        $("#preview").classList.remove("hidden");
+      }).catch(() => {});
+  }, 600);
+});
+
+$("#dlBtn").onclick = async () => {
+  const url = $("#url").value.trim();
+  const status = $("#mediaStatus");
+  if (!/^https?:\/\//.test(url)) { status.className = "status err"; status.textContent = "Enter a valid URL."; return; }
+  status.className = "status"; status.innerHTML = `<span class="spinner"></span>Downloading & converting…`;
+  $("#dlBtn").disabled = true;
+  try {
+    const res = await fetch("/api/download", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, format: fmt, quality: fmt === "mp4" ? $("#videoQuality").value : "0" }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({ error: "Download failed" }));
+      throw new Error(j.error || "Download failed");
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^"]+)"?/);
+    downloadBlob(blob, m ? m[1] : "download." + fmt);
+    status.className = "status ok"; status.textContent = "✓ Done — file downloaded.";
+  } catch (e) {
+    status.className = "status err"; status.textContent = "✕ " + e.message;
+  }
+  $("#dlBtn").disabled = false;
+};
+
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "free-converter",
+  "version": "1.0.0",
+  "description": "A free local file converter + YouTube/SoundCloud downloader",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^2.0.0"
+  }
+}
