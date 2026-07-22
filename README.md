@@ -38,6 +38,39 @@ winget install TheDocumentFoundation.LibreOffice
 ```
 Restart the server afterward.
 
+## Making YouTube work on Render (or any server host)
+
+YouTube aggressively blocks **datacenter IPs** with a "Sign in to confirm you're not
+a bot" error. This does **not** happen on a home connection, only on cloud hosts.
+Two ways to fix it on Render — pick one:
+
+### Option A — Cookies (free, most reliable)
+1. In Chrome/Edge, install the **"Get cookies.txt LOCALLY"** extension.
+2. Open youtube.com **signed in**, click the extension, **Export** as `cookies.txt`.
+3. In the Render dashboard: **your service → Environment → Secret Files → Add**,
+   filename **`cookies.txt`**, paste the file contents.
+4. Redeploy. The app auto-detects `/etc/secrets/cookies.txt`.
+
+### Option B — Residential proxy (paid, set-and-forget)
+Sign up for a residential proxy provider (BrightData, Smartproxy, IPRoyal, …) and add
+an env var in Render:
+```
+YT_PROXY = http://USER:PASS@HOST:PORT
+```
+(`socks5://…` also works.) All yt-dlp traffic then exits through that IP.
+Free public proxy lists generally do **not** work against YouTube and are unsafe.
+
+> Locally (home IP) you need neither — it already works, because the app tries
+> multiple YouTube player clients to dodge the bot check.
+
+### Env vars reference
+| Var | Purpose |
+|-----|---------|
+| `YT_PROXY` | Route yt-dlp through a proxy, e.g. `http://user:pass@host:port` |
+| `YT_COOKIES_FILE` | Explicit path to a cookies.txt |
+| `YT_COOKIES_BROWSER` | Read cookies from a browser (local only), e.g. `firefox` |
+| `YT_CLIENTS` | Override the player-client fallback list |
+
 ## Note on downloading
 
 Only download content you own or have the right to use. Respect each platform's

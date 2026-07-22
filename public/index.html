@@ -69,6 +69,12 @@
   .preview .t { font-size: 14px; font-weight: 600; }
   .preview .m { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .note { font-size: 12px; color: var(--muted); margin-top: 18px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 14px; }
+  .progress { margin-top: 18px; }
+  .progbar { height: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+  .progfill { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .3s ease; }
+  .progfill.indeterminate { width: 40% !important; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+  .proglabel { font-size: 13px; color: var(--muted); margin-top: 8px; text-align: center; }
 </style>
 </head>
 <body>
@@ -148,6 +154,12 @@
     </div>
 
     <button class="go" id="dlBtn">Download</button>
+
+    <div class="progress hidden" id="progWrap">
+      <div class="progbar"><div class="progfill" id="progFill"></div></div>
+      <div class="proglabel" id="progLabel">Starting…</div>
+    </div>
+
     <div class="status" id="mediaStatus"></div>
 
     <div class="note">
@@ -278,27 +290,61 @@ $("#url").addEventListener("input", () => {
   }, 600);
 });
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function setProgress(pct, label, indeterminate) {
+  $("#progWrap").classList.remove("hidden");
+  const fill = $("#progFill");
+  fill.classList.toggle("indeterminate", !!indeterminate);
+  if (!indeterminate) fill.style.width = Math.max(2, pct) + "%";
+  $("#progLabel").textContent = label;
+}
+
 $("#dlBtn").onclick = async () => {
   const url = $("#url").value.trim();
   const status = $("#mediaStatus");
   if (!/^https?:\/\//.test(url)) { status.className = "status err"; status.textContent = "Enter a valid URL."; return; }
-  status.className = "status"; status.innerHTML = `<span class="spinner"></span>Downloading & converting…`;
+  status.className = "status"; status.textContent = "";
   $("#dlBtn").disabled = true;
+  setProgress(0, "Starting…", true);
+
   try {
-    const res = await fetch("/api/download", {
+    // 1) kick off the job
+    const start = await fetch("/api/download", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, format: fmt, quality: fmt === "mp4" ? $("#videoQuality").value : "0" }),
     });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({ error: "Download failed" }));
-      throw new Error(j.error || "Download failed");
+    const sj = await start.json();
+    if (!start.ok || !sj.jobId) throw new Error(sj.error || "Could not start download");
+    const jobId = sj.jobId;
+
+    // 2) poll progress
+    while (true) {
+      await sleep(600);
+      const pr = await fetch("/api/progress/" + jobId);
+      if (!pr.ok) throw new Error("Lost track of the job");
+      const j = await pr.json();
+      if (j.status === "running") {
+        const showBar = j.stage === "Downloading" && j.percent > 0;
+        setProgress(j.percent, `${j.stage}${showBar ? " " + j.percent.toFixed(1) + "%" : "…"}`, !showBar);
+      } else if (j.status === "done") {
+        setProgress(100, "Complete", false);
+        break;
+      } else {
+        throw new Error(j.error || "Download failed");
+      }
     }
-    const blob = await res.blob();
-    const cd = res.headers.get("Content-Disposition") || "";
-    const m = cd.match(/filename="?([^"]+)"?/);
-    downloadBlob(blob, m ? m[1] : "download." + fmt);
-    status.className = "status ok"; status.textContent = "✓ Done — file downloaded.";
+
+    // 3) fetch the finished file
+    const a = document.createElement("a");
+    a.href = "/api/file/" + jobId;
+    a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+
+    status.className = "status ok"; status.textContent = "✓ Done — saving file…";
+    setTimeout(() => $("#progWrap").classList.add("hidden"), 1500);
   } catch (e) {
+    $("#progWrap").classList.add("hidden");
     status.className = "status err"; status.textContent = "✕ " + e.message;
   }
   $("#dlBtn").disabled = false;

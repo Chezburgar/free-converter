@@ -8,6 +8,7 @@ const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -79,13 +80,18 @@ const DENO = resolveBin("deno", "deno.exe"); // JS runtime YouTube now needs
 const FFMPEG_DIR = path.dirname(FFMPEG);
 
 // Cookies let yt-dlp pass YouTube's "confirm you're not a bot" check.
-// Priority: explicit env file > cookies.txt beside this app > a browser name.
+// Priority: explicit env file > cookies.txt beside app > Render secret file > browser.
 const COOKIES_FILE =
   process.env.YT_COOKIES_FILE ||
-  (fs.existsSync(path.join(__dirname, "cookies.txt"))
-    ? path.join(__dirname, "cookies.txt")
-    : null);
+  firstExisting([
+    path.join(__dirname, "cookies.txt"),
+    "/etc/secrets/cookies.txt", // Render "Secret Files" mount point
+  ]);
 const COOKIES_BROWSER = process.env.YT_COOKIES_BROWSER || null; // e.g. "firefox"
+
+// Route yt-dlp through a proxy (e.g. a residential proxy) to escape a blocked
+// datacenter IP. Set YT_PROXY=http://user:pass@host:port  (or socks5://…).
+const YT_PROXY = process.env.YT_PROXY || null;
 
 // YouTube "player clients" to try. Handing yt-dlp several at once lets it fall
 // back automatically when one hits YouTube's bot check — the trick that makes
@@ -99,6 +105,7 @@ function ytCommonArgs() {
   if (DENO) a.push("--js-runtimes", `deno:${DENO}`);
   a.push("--extractor-args", `youtube:player_client=${YT_CLIENTS}`);
   a.push("--retries", "5", "--extractor-retries", "5", "--fragment-retries", "10");
+  if (YT_PROXY) a.push("--proxy", YT_PROXY);
   if (COOKIES_FILE) a.push("--cookies", COOKIES_FILE);
   else if (COOKIES_BROWSER) a.push("--cookies-from-browser", COOKIES_BROWSER);
   return a;
@@ -130,6 +137,7 @@ console.log(
     ? `browser: ${COOKIES_BROWSER}`
     : "(none — some YouTube videos will hit the bot check)"
 );
+console.log("  proxy  :", YT_PROXY ? YT_PROXY.replace(/\/\/[^@]*@/, "//***@") : "(none)");
 console.log("  soffice:", SOFFICE || "(not found — document conversion disabled)");
 
 // ---------------------------------------------------------------------------
@@ -310,7 +318,21 @@ app.post("/api/convert", upload.single("file"), (req, res) => {
   }
 });
 
-// ---------- YouTube / SoundCloud download ----------
+// ---------- YouTube / SoundCloud download (with live progress) ----------
+// jobs: id -> { status, percent, stage, file, name, error, tail }
+const jobs = new Map();
+
+// Sweep old jobs/files every few minutes.
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, j] of jobs) {
+    if (now - j.created > 20 * 60 * 1000) {
+      cleanup(j.file);
+      jobs.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
 app.post("/api/download", (req, res) => {
   const url = (req.body.url || "").trim();
   const format = (req.body.format || "mp3").toLowerCase(); // mp3 | mp4
@@ -319,12 +341,27 @@ app.post("/api/download", (req, res) => {
   if (!/^https?:\/\//i.test(url))
     return res.status(400).json({ error: "Please enter a valid http(s) URL" });
 
-  const id = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-  const outTemplate = path.join(WORK, `dl-${id}.%(ext)s`);
+  const jobId = crypto.randomUUID();
+  const fileTag = Date.now() + "-" + jobId.slice(0, 8);
+  const outTemplate = path.join(WORK, `dl-${fileTag}.%(ext)s`);
+
+  const job = {
+    status: "running", // running | done | error
+    percent: 0,
+    stage: "Preparing…",
+    file: null,
+    name: null,
+    error: null,
+    tail: "",
+    created: Date.now(),
+  };
+  jobs.set(jobId, job);
+  res.json({ jobId });
 
   let args = [
     ...ytCommonArgs(),
     "--no-playlist",
+    "--newline", // emit progress on its own lines so we can parse it
     "--ffmpeg-location", FFMPEG_DIR,
     "-o", outTemplate,
     "--restrict-filenames",
@@ -341,33 +378,95 @@ app.post("/api/download", (req, res) => {
       "mp4"
     );
   } else {
-    // audio -> mp3
     args.push("-x", "--audio-format", "mp3", "--audio-quality", quality || "0");
   }
   args.push(url);
 
   const p = spawn(YTDLP, args);
-  let err = "";
-  p.stderr.on("data", (d) => (err += d.toString()));
-  p.stdout.on("data", () => {});
-  p.on("error", (e) => res.status(500).json({ error: String(e.message || e) }));
+
+  const onLine = (line) => {
+    job.tail = (job.tail + line + "\n").split("\n").slice(-12).join("\n");
+    const m = line.match(/\[download\]\s+([\d.]+)%/);
+    if (m) {
+      job.percent = Math.min(99, parseFloat(m[1]));
+      job.stage = "Downloading";
+    } else if (/\[ExtractAudio\]|Destination.*\.mp3|\[VideoConvertor\]|Recode|\[VideoRemuxer\]/.test(line)) {
+      job.stage = "Converting";
+    } else if (/\[Merger\]/.test(line)) {
+      job.stage = "Merging streams";
+    }
+  };
+
+  let buf = "";
+  const feed = (d) => {
+    buf += d.toString();
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      onLine(buf.slice(0, idx).trim());
+      buf = buf.slice(idx + 1);
+    }
+  };
+  p.stdout.on("data", feed);
+  p.stderr.on("data", feed);
+
+  p.on("error", (e) => {
+    job.status = "error";
+    job.error = String(e.message || e);
+  });
   p.on("close", (code) => {
-    // find produced file
+    if (buf.trim()) onLine(buf.trim());
     let produced = null;
     try {
       produced = fs
         .readdirSync(WORK)
-        .filter((f) => f.startsWith(`dl-${id}.`))
+        .filter((f) => f.startsWith(`dl-${fileTag}.`))
         .map((f) => path.join(WORK, f))
         .find((f) => fs.statSync(f).size > 0);
     } catch (_) {}
-    if (code !== 0 || !produced) {
-      return res
-        .status(500)
-        .json({ error: err.split(/\r?\n/).slice(-6).join("\n") || "Download failed" });
+
+    if (code === 0 && produced) {
+      job.status = "done";
+      job.percent = 100;
+      job.stage = "Done";
+      job.file = produced;
+      job.name = "download" + path.extname(produced);
+    } else {
+      job.status = "error";
+      job.error = friendlyDlError(job.tail);
     }
-    const ext = path.extname(produced);
-    res.download(produced, `download${ext}`, () => cleanup(produced));
+  });
+});
+
+// Human-friendly message from yt-dlp's tail output.
+function friendlyDlError(tail) {
+  if (/Sign in to confirm|not a bot/i.test(tail))
+    return "YouTube blocked this request (bot check). On a server IP this is common — add cookies (see README) or set a proxy via YT_PROXY.";
+  if (/Private video|members-only|Join this channel/i.test(tail))
+    return "This video is private or members-only.";
+  if (/Video unavailable|removed/i.test(tail))
+    return "This video is unavailable or was removed.";
+  if (/is not a valid URL|Unsupported URL/i.test(tail))
+    return "That link isn't a supported video/track URL.";
+  const lines = tail.split(/\r?\n/).filter((l) => /error/i.test(l));
+  return (lines.slice(-2).join("\n") || tail.split(/\r?\n/).slice(-3).join("\n")).trim() ||
+    "Download failed.";
+}
+
+// Progress polling.
+app.get("/api/progress/:id", (req, res) => {
+  const j = jobs.get(req.params.id);
+  if (!j) return res.status(404).json({ error: "Unknown job" });
+  res.json({ status: j.status, percent: j.percent, stage: j.stage, error: j.error });
+});
+
+// Fetch the finished file, then clean it up.
+app.get("/api/file/:id", (req, res) => {
+  const j = jobs.get(req.params.id);
+  if (!j || j.status !== "done" || !j.file)
+    return res.status(404).json({ error: "File not ready" });
+  res.download(j.file, j.name, () => {
+    cleanup(j.file);
+    jobs.delete(req.params.id);
   });
 });
 
